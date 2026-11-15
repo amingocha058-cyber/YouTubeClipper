@@ -1,7 +1,9 @@
 package dz.amingocha058.youtubeclipper
 
 import android.content.Intent
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.content.Context
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -207,16 +209,31 @@ private fun ClipperScreen(onAuthorize: ((Result<String>) -> Unit) -> Unit) {
             }
         }
 
+        val audioPermissionLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            if (granted) {
+                val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
+            } else {
+                status = "يجب السماح باستخدام الميكروفون لتسجيل الصوت."
+            }
+        }
+
         Card {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("تسجيل بث YouTube", style = MaterialTheme.typography.titleMedium)
-                Text("سجّل الشاشة أثناء مشاهدة البث. يسجل الصوت عبر ميكروفون الهاتف؛ قد لا يلتقط الصوت الداخلي مباشرةً.")
+                Text("يسجل الشاشة كاملة حالياً، مع صوت الميكروفون. شغّل البث من مكبر الهاتف؛ الصوت الداخلي المباشر غير مضمون.")
                 Button(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
                         if (!liveRecording) {
-                            val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                            screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
+                            if (androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
+                            } else {
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
                         } else {
                             context.startService(Intent(context, LiveScreenRecorderService::class.java).apply {
                                 action = LiveScreenRecorderService.ACTION_STOP
