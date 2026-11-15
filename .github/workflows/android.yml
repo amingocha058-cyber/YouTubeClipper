@@ -28,6 +28,9 @@ jobs:
         with:
           gradle-version: "8.11.1"
 
+      - name: Print debug signing fingerprint
+        run: gradle --no-daemon :app:signingReport
+
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 
