@@ -1,6 +1,8 @@
 package dz.amingocha058.youtubeclipper
 
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
@@ -35,6 +37,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -191,6 +194,49 @@ private fun ClipperScreen(onAuthorize: ((Result<String>) -> Unit) -> Unit) {
         Text("قص الفيديوهات وتجهيز Shorts ثم رفعها إلى قناتك.")
 
         var liveRecording by rememberSaveable { mutableStateOf(false) }
+
+        DisposableEffect(context) {
+            val savedReceiver = object : BroadcastReceiver() {
+                override fun onReceive(receiverContext: Context?, intent: Intent?) {
+                    val path = intent?.getStringExtra(LiveScreenRecorderService.EXTRA_OUTPUT_PATH) ?: return
+                    val file = File(path)
+                    if (!file.exists() || file.length() <= 0L) {
+                        status = "انتهى التسجيل لكن الملف غير صالح."
+                        return
+                    }
+                    val recordedUri = Uri.fromFile(file)
+                    val retriever = MediaMetadataRetriever()
+                    val length = try {
+                        retriever.setDataSource(file.absolutePath)
+                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                    } catch (_: Exception) {
+                        0L
+                    } finally {
+                        try { retriever.release() } catch (_: Exception) { }
+                    }
+                    sourceUri = recordedUri.toString()
+                    sourceName = file.name
+                    durationMs = length
+                    startSeconds = "0"
+                    endSeconds = (length / 1000L).coerceAtLeast(1L).toString()
+                    quickLength = "30"
+                    title = buildSuggestedTitle(file.name, 0L)
+                    outputPath = null
+                    liveRecording = false
+                    status = if (length > 0L) "تم حفظ التسجيل وأصبح جاهزاً للقص: " + formatTime(length / 1000L) else "تم حفظ التسجيل، لكن تعذرت قراءة مدته."
+                }
+            }
+            val filter = IntentFilter(LiveScreenRecorderService.ACTION_RECORDING_SAVED)
+            if (Build.VERSION.SDK_INT >= 33) {
+                context.registerReceiver(savedReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                context.registerReceiver(savedReceiver, filter)
+            }
+            onDispose {
+                try { context.unregisterReceiver(savedReceiver) } catch (_: Exception) { }
+            }
+        }
         val screenCaptureLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) { result ->
@@ -239,7 +285,7 @@ private fun ClipperScreen(onAuthorize: ((Result<String>) -> Unit) -> Unit) {
                                 action = LiveScreenRecorderService.ACTION_STOP
                             })
                             liveRecording = false
-                            status = "تم إيقاف التسجيل. ابحث عن الملف في مجلد ملفات التطبيق."
+                            status = "تم طلب إيقاف التسجيل؛ جارٍ تجهيز الملف لإضافته إلى محرّر القص."
                         }
                     }
                 ) { Text(if (liveRecording) "إيقاف تسجيل البث" else "بدء تسجيل البث") }
