@@ -1,6 +1,10 @@
 package dz.amingocha058.youtubeclipper
 
 import android.content.Intent
+import android.app.Activity
+import android.content.Context
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
@@ -183,6 +187,47 @@ private fun ClipperScreen(onAuthorize: ((Result<String>) -> Unit) -> Unit) {
     ) {
         Text("YouTube Clipper", style = MaterialTheme.typography.headlineMedium)
         Text("قص الفيديوهات وتجهيز Shorts ثم رفعها إلى قناتك.")
+
+        var liveRecording by rememberSaveable { mutableStateOf(false) }
+        val screenCaptureLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.StartActivityForResult()
+        ) { result ->
+            if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+                val serviceIntent = Intent(context, LiveScreenRecorderService::class.java).apply {
+                    action = LiveScreenRecorderService.ACTION_START
+                    putExtra(LiveScreenRecorderService.EXTRA_RESULT_CODE, result.resultCode)
+                    putExtra(LiveScreenRecorderService.EXTRA_DATA, result.data)
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(serviceIntent)
+                else context.startService(serviceIntent)
+                liveRecording = true
+                status = "بدأ تسجيل الشاشة. شغّل بث YouTube بصوت مكبر الهاتف للحصول على صوت عبر الميكروفون."
+            } else {
+                status = "تم إلغاء إذن تسجيل الشاشة."
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("تسجيل بث YouTube", style = MaterialTheme.typography.titleMedium)
+                Text("سجّل الشاشة أثناء مشاهدة البث. يسجل الصوت عبر ميكروفون الهاتف؛ قد لا يلتقط الصوت الداخلي مباشرةً.")
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        if (!liveRecording) {
+                            val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                            screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
+                        } else {
+                            context.startService(Intent(context, LiveScreenRecorderService::class.java).apply {
+                                action = LiveScreenRecorderService.ACTION_STOP
+                            })
+                            liveRecording = false
+                            status = "تم إيقاف التسجيل. ابحث عن الملف في مجلد ملفات التطبيق."
+                        }
+                    }
+                ) { Text(if (liveRecording) "إيقاف تسجيل البث" else "بدء تسجيل البث") }
+            }
+        }
 
         Card {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
