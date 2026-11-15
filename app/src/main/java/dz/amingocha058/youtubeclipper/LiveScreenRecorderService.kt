@@ -105,6 +105,15 @@ class LiveScreenRecorderService : Service() {
         virtualDisplay = null
         try { projection?.stop() } catch (_: Exception) { }
         projection = null
+
+        val completedFile = outputFile
+        if (completedFile != null && completedFile.exists() && completedFile.length() > 0L) {
+            sendBroadcast(Intent(ACTION_RECORDING_SAVED).apply {
+                setPackage(packageName)
+                putExtra(EXTRA_OUTPUT_PATH, completedFile.absolutePath)
+            })
+        }
+        outputFile = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -126,6 +135,8 @@ class LiveScreenRecorderService : Service() {
     companion object {
         const val ACTION_START = "dz.amingocha058.youtubeclipper.START_LIVE_RECORDING"
         const val ACTION_STOP = "dz.amingocha058.youtubeclipper.STOP_LIVE_RECORDING"
+        const val ACTION_RECORDING_SAVED = "dz.amingocha058.youtubeclipper.LIVE_RECORDING_SAVED"
+        const val EXTRA_OUTPUT_PATH = "output_path"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_DATA = "projection_data"
         private const val CHANNEL_ID = "live_screen_recording"
