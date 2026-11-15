@@ -7,11 +7,13 @@ import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.content.Context
+import android.content.ContentValues
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -156,6 +158,7 @@ private fun ClipperScreen(onAuthorize: ((Result<String>) -> Unit) -> Unit) {
     var title by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var outputPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var galleryUriString by rememberSaveable { mutableStateOf<String?>(null) }
     var status by rememberSaveable { mutableStateOf("اختر فيديو من هاتفك للبدء.") }
     var busy by rememberSaveable { mutableStateOf(false) }
 
@@ -204,26 +207,36 @@ private fun ClipperScreen(onAuthorize: ((Result<String>) -> Unit) -> Unit) {
                         status = "انتهى التسجيل لكن الملف غير صالح."
                         return
                     }
-                    val recordedUri = Uri.fromFile(file)
-                    val retriever = MediaMetadataRetriever()
-                    val length = try {
-                        retriever.setDataSource(file.absolutePath)
-                        retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
-                    } catch (_: Exception) {
-                        0L
-                    } finally {
-                        try { retriever.release() } catch (_: Exception) { }
+                    scope.launch {
+                        val publicUri = withContext(Dispatchers.IO) {
+                            saveVideoToGallery(context, file)
+                        }
+                        val retriever = MediaMetadataRetriever()
+                        val length = try {
+                            retriever.setDataSource(file.absolutePath)
+                            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                        } catch (_: Exception) {
+                            0L
+                        } finally {
+                            try { retriever.release() } catch (_: Exception) { }
+                        }
+                        sourceUri = Uri.fromFile(file).toString()
+                        sourceName = file.name
+                        durationMs = length
+                        startSeconds = "0"
+                        endSeconds = (length / 1000L).coerceAtLeast(1L).toString()
+                        quickLength = "30"
+                        title = buildSuggestedTitle(file.name, 0L)
+                        outputPath = null
+                        galleryUriString = publicUri?.toString()
+                        liveRecording = false
+                        status = when {
+                            publicUri != null && length > 0L -> "تم حفظ التسجيل في معرض الهاتف وأصبح جاهزاً للقص: " + formatTime(length / 1000L)
+                            publicUri != null -> "تم حفظ التسجيل في المعرض، لكن تعذرت قراءة مدته."
+                            length > 0L -> "تم التسجيل، لكن تعذر نسخه إلى معرض الهاتف. الملف متاح داخل التطبيق."
+                            else -> "تم التسجيل، لكن تعذرت قراءة مدة الفيديو أو حفظه في المعرض."
+                        }
                     }
-                    sourceUri = recordedUri.toString()
-                    sourceName = file.name
-                    durationMs = length
-                    startSeconds = "0"
-                    endSeconds = (length / 1000L).coerceAtLeast(1L).toString()
-                    quickLength = "30"
-                    title = buildSuggestedTitle(file.name, 0L)
-                    outputPath = null
-                    liveRecording = false
-                    status = if (length > 0L) "تم حفظ التسجيل وأصبح جاهزاً للقص: " + formatTime(length / 1000L) else "تم حفظ التسجيل، لكن تعذرت قراءة مدته."
                 }
             }
             val filter = IntentFilter(LiveScreenRecorderService.ACTION_RECORDING_SAVED)
@@ -363,10 +376,20 @@ private fun ClipperScreen(onAuthorize: ((Result<String>) -> Unit) -> Unit) {
                     endMs = end * 1000L,
                     vertical = aspect == "9:16",
                     onComplete = { file ->
-                        busy = false
-                        outputPath = file.absolutePath
-                        status = "اكتمل التصدير: ${file.name}"
-                        if (title.isBlank()) title = buildSuggestedTitle(sourceName, start)
+                        scope.launch {
+                            val publicUri = withContext(Dispatchers.IO) {
+                                saveVideoToGallery(context, file)
+                            }
+                            busy = false
+                            outputPath = file.absolutePath
+                            galleryUriString = publicUri?.toString()
+                            status = if (publicUri != null) {
+                                "اكتمل التصدير وحُفظ الفيديو في معرض الهاتف: Movies/YouTubeClipper"
+                            } else {
+                                "اكتمل التصدير، لكن تعذر حفظ نسخة في المعرض. الملف متاح للمشاركة من التطبيق."
+                            }
+                            if (title.isBlank()) title = buildSuggestedTitle(sourceName, start)
+                        }
                     },
                     onError = { error ->
                         busy = false
@@ -450,6 +473,42 @@ private fun ClipperScreen(onAuthorize: ((Result<String>) -> Unit) -> Unit) {
             "ملاحظة: الرفع الرسمي يحتاج تفعيل YouTube Data API وإعداد OAuth للتطبيق في Google Cloud. لا تدخل كلمة مرور Google داخل التطبيق.",
             style = MaterialTheme.typography.bodySmall
         )
+    }
+}
+
+/**
+ * Publishes a completed MP4 in the public Movies/YouTubeClipper collection.
+ * MediaStore exposes it to Gallery/Photos without broad storage permissions.
+ */
+private fun saveVideoToGallery(context: Context, source: File): Uri? {
+    if (!source.exists() || source.length() <= 0L) return null
+
+    val resolver = context.contentResolver
+    val values = ContentValues().apply {
+        put(MediaStore.Video.Media.DISPLAY_NAME, source.name)
+        put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+        put(
+            MediaStore.Video.Media.RELATIVE_PATH,
+            "${android.os.Environment.DIRECTORY_MOVIES}/YouTubeClipper"
+        )
+        put(MediaStore.Video.Media.IS_PENDING, 1)
+    }
+    val collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+    val destination = resolver.insert(collection, values) ?: return null
+
+    return try {
+        resolver.openOutputStream(destination, "w")?.use { output ->
+            source.inputStream().use { input -> input.copyTo(output) }
+        } ?: error("تعذر فتح ملف المعرض للكتابة")
+
+        val completedValues = ContentValues().apply {
+            put(MediaStore.Video.Media.IS_PENDING, 0)
+        }
+        resolver.update(destination, completedValues, null, null)
+        destination
+    } catch (_: Exception) {
+        try { resolver.delete(destination, null, null) } catch (_: Exception) { }
+        null
     }
 }
 
