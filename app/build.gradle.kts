@@ -16,6 +16,22 @@ android {
         versionName = "0.2.0"
     }
 
+    signingConfigs {
+        create("release") {
+            // Supplied by GitHub Actions from repository secrets.
+            storeFile = file(System.getenv("KEYSTORE_FILE") ?: "${rootProject.projectDir}/youtubeclipper-release.jks")
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("KEY_ALIAS") ?: ""
+            keyPassword = System.getenv("KEY_PASSWORD") ?: ""
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
     buildFeatures { compose = true }
 
     compileOptions {
