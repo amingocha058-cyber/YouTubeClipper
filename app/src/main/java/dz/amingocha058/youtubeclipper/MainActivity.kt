@@ -14,6 +14,8 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -48,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
@@ -316,6 +319,30 @@ private fun ClipperScreen(onAuthorize: ((Result<String>) -> Unit) -> Unit) {
             }
         }
 
+        if (sourceUri != null) {
+            Card {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("معاينة الفيديو", style = MaterialTheme.typography.titleMedium)
+                    AndroidView(
+                        modifier = Modifier.fillMaxWidth().height(220.dp),
+                        factory = { viewContext ->
+                            VideoView(viewContext).apply {
+                                setMediaController(MediaController(viewContext).also { it.setAnchorView(this) })
+                            }
+                        },
+                        update = { player ->
+                            val selectedUri = sourceUri
+                            if (selectedUri != null && player.tag != selectedUri) {
+                                player.tag = selectedUri
+                                player.setVideoURI(Uri.parse(selectedUri))
+                            }
+                        }
+                    )
+                    Text("استخدم أدوات التشغيل لمشاهدة التسجيل والبحث عن اللحظة المناسبة.")
+                }
+            }
+        }
+
         Card {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("2. تحديد الجزء", style = MaterialTheme.typography.titleMedium)
@@ -331,7 +358,36 @@ private fun ClipperScreen(onAuthorize: ((Result<String>) -> Unit) -> Unit) {
                     value = endSeconds, onValueChange = { endSeconds = it.filter(Char::isDigit) },
                     label = { Text("نهاية المقطع بالثواني") }, modifier = Modifier.fillMaxWidth(), singleLine = true
                 )
-                Text("يمكنك تغيير البداية والنهاية يدوياً.")
+                if (durationMs > 0L) {
+                    val totalSeconds = (durationMs / 1000L).coerceAtLeast(1L)
+                    val totalFloat = totalSeconds.toFloat()
+                    val selectedStart = (startSeconds.toFloatOrNull() ?: 0f).coerceIn(0f, totalFloat)
+                    val selectedEnd = (endSeconds.toFloatOrNull() ?: totalFloat).coerceIn(0f, totalFloat)
+
+                    Text("اسحب لتحديد البداية: ${formatTime(selectedStart.toLong())}")
+                    Slider(
+                        value = selectedStart,
+                        onValueChange = { value ->
+                            val safeStart = value.toLong().coerceAtMost((totalSeconds - 1L).coerceAtLeast(0L))
+                            startSeconds = safeStart.toString()
+                            if ((endSeconds.toLongOrNull() ?: totalSeconds) <= safeStart) {
+                                endSeconds = (safeStart + 1L).coerceAtMost(totalSeconds).toString()
+                            }
+                        },
+                        valueRange = 0f..totalFloat
+                    )
+
+                    Text("اسحب لتحديد النهاية: ${formatTime(selectedEnd.toLong())}")
+                    Slider(
+                        value = selectedEnd,
+                        onValueChange = { value ->
+                            val minimumEnd = (startSeconds.toLongOrNull() ?: 0L) + 1L
+                            endSeconds = value.toLong().coerceIn(minimumEnd.coerceAtMost(totalSeconds), totalSeconds).toString()
+                        },
+                        valueRange = 0f..totalFloat
+                    )
+                }
+                Text("يمكنك تغيير البداية والنهاية يدوياً أو استعمال شريطي التحديد أعلاه.")
             }
         }
 
